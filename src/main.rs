@@ -7,7 +7,11 @@ use ureq::get;
 
 mod generate_xlsx;
 
-const ROOT_URL: &str = "https://m.weibo.cn/api/container/getIndex?&containerid=1076037243323531";
+const ROOT_URL: &str =
+    "https://m.weibo.cn/api/container/getIndex?&containerid=1076037243323531&page=";
+const PAGE_LIMIT: usize = 3;
+const OUTPUT_DIR: &str = "weibo";
+const WAIT: u64 = 3;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -24,26 +28,20 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
-const OUTPUT_DIR: &str = "weibo";
 
 fn main() -> Result<()> {
     set_dir();
+    println!("执行收集最近{}0条微博", PAGE_LIMIT);
     let mut date_map: HashMap<String, u32> = HashMap::new();
     let options = LaunchOptionsBuilder::default()
         .window_size(Some((1280, 800)))
         .build()
         .map_err(Error::Browser)?;
     let browser = Browser::new(options).map_err(|e| Error::Browser(format!("{}", e)))?;
-    let root_response = get_root_info()?;
-    let vec_mb = root_response
-        .data
-        .cards
-        .iter()
-        .map(|c| c.mblog.clone().try_into().unwrap());
+    let cards = get_root_info()?;
+    let vec_mb = cards.iter().map(|c| c.mblog.clone().try_into().unwrap());
     let mut pic_names = Vec::new();
-    let vec_card: Vec<RootCard> = root_response
-        .data
-        .cards
+    let vec_card: Vec<RootCard> = cards
         .iter()
         .map(|c| c.clone().try_into().unwrap())
         .collect();
@@ -58,9 +56,8 @@ fn main() -> Result<()> {
         println!("正在抓取微博:{}", &card.mblog.id);
         tab.navigate_to(&card.scheme)
             .map_err(|e| Error::Browser(format!("{}", e)))?;
-        let wait = 3;
-        println!("等待{}秒，让网页完全显示", wait);
-        std::thread::sleep(Duration::from_secs(wait));
+        println!("等待{}秒，让网页完全显示", WAIT);
+        std::thread::sleep(Duration::from_secs(WAIT));
         let shot = tab
             .capture_screenshot(ScreenshotFormat::PNG, None, true)
             .map_err(|e| Error::Browser(format!("{}", e)))?;
@@ -68,9 +65,8 @@ fn main() -> Result<()> {
         let mut base = Path::new(OUTPUT_DIR).to_path_buf();
         base.push(&file_name);
         fs::write(&base, &shot)?;
-        println!("抓取{}成功休息一秒", &card.mblog.id);
+        println!("抓取{}成功", &card.mblog.id);
         pic_names.push(format!("{}-{}-{}", month, day, q));
-        std::thread::sleep(Duration::from_secs(1));
     }
     let now = Local::now();
     let file_name = format!(
@@ -165,7 +161,13 @@ pub struct MBlog {
     created_at: DateTime<FixedOffset>,
 }
 
-fn get_root_info() -> Result<RootResponse> {
-    let res: RootResponse = get(ROOT_URL).call()?.into_json()?;
-    Ok(res)
+fn get_root_info() -> Result<Vec<RootCardRaw>> {
+    let mut cards: Vec<RootCardRaw> = Vec::new();
+    for page in 1..=PAGE_LIMIT {
+        let res: RootResponse = get(format!("{}{}", ROOT_URL, page).as_str())
+            .call()?
+            .into_json()?;
+        cards.extend(res.data.cards);
+    }
+    Ok(cards)
 }
