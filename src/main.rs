@@ -1,16 +1,21 @@
 use chrono::prelude::*;
 use headless_chrome::{protocol::page::ScreenshotFormat, Browser, LaunchOptionsBuilder};
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::{collections::HashMap, fs, path::Path, time::Duration};
 use thiserror::Error;
 use ureq::get;
+
+static OUTPUT_DIR: Lazy<String> = Lazy::new(|| {
+    let now = Local::now();
+    format!("{}年{}月{}日收集weibo", now.year(), now.month(), now.day())
+});
 
 mod generate_xlsx;
 
 const ROOT_URL: &str =
     "https://m.weibo.cn/api/container/getIndex?&containerid=1076037243323531&page=";
 const PAGE_LIMIT: usize = 3;
-const OUTPUT_DIR: &str = "weibo";
 const WAIT: u64 = 3;
 
 #[derive(Debug, Error)]
@@ -62,7 +67,7 @@ fn main() -> Result<()> {
             .capture_screenshot(ScreenshotFormat::PNG, None, true)
             .map_err(|e| Error::Browser(format!("{}", e)))?;
         let file_name = format!("{}-{}-{}.png", month, day, q);
-        let mut base = Path::new(OUTPUT_DIR).to_path_buf();
+        let mut base = Path::new(OUTPUT_DIR.as_str()).to_path_buf();
         base.push(&file_name);
         fs::write(&base, &shot)?;
         println!("抓取{}成功", &card.mblog.id);
@@ -75,7 +80,7 @@ fn main() -> Result<()> {
         now.month(),
         now.day()
     );
-    let mut base = Path::new(OUTPUT_DIR).to_path_buf();
+    let mut base = Path::new(OUTPUT_DIR.as_str()).to_path_buf();
     base.push(&file_name);
     let input = vec_mb.zip(pic_names.into_iter()).collect();
     generate_xlsx::generate_xlsx(input, base.as_os_str().to_str().unwrap())?;
@@ -83,10 +88,10 @@ fn main() -> Result<()> {
 }
 
 fn set_dir() {
-    match fs::read_dir(OUTPUT_DIR) {
+    match fs::read_dir(OUTPUT_DIR.as_str()) {
         Ok(_) => {}
         Err(_) => {
-            fs::create_dir(OUTPUT_DIR).unwrap();
+            fs::create_dir(OUTPUT_DIR.as_str()).unwrap();
         }
     }
 }

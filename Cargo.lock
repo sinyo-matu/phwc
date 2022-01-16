@@ -245,6 +245,7 @@ dependencies = [
  "chrono-tz",
  "failure",
  "headless_chrome",
+ "once_cell",
  "serde",
  "serde_json",
  "thiserror",
