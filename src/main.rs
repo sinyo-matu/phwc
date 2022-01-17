@@ -1,22 +1,41 @@
 use chrono::prelude::*;
-use headless_chrome::{protocol::page::ScreenshotFormat, Browser, LaunchOptionsBuilder};
+use chrono_tz::Asia::Shanghai;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
-use std::{collections::HashMap, fs, path::Path, time::Duration};
+use std::{collections::HashMap, fs, ops::Sub, path::Path};
 use thiserror::Error;
 use ureq::get;
 
-static OUTPUT_DIR: Lazy<String> = Lazy::new(|| {
+struct Config {
+    output_dir: String,
+    recent: i64,
+    accent: i64,
+    limit: usize,
+    captures: bool,
+}
+
+static CONFIG: Lazy<Config> = Lazy::new(|| {
     let now = Local::now();
-    format!("{}年{}月{}日收集weibo", now.year(), now.month(), now.day())
+    let output_dir = format!("{}年{}月{}日收集weibo", now.year(), now.month(), now.day());
+    let captures = dotenv::var("CAPTURES").unwrap().parse::<bool>().unwrap();
+    let recent = dotenv::var("RECENT").unwrap().parse::<i64>().unwrap();
+    let accent = dotenv::var("ACCENT").unwrap().parse::<i64>().unwrap();
+    let limit = dotenv::var("LIMIT").unwrap().parse::<usize>().unwrap();
+    Config {
+        output_dir,
+        recent,
+        accent,
+        limit,
+        captures,
+    }
 });
 
+mod captures;
 mod generate_xlsx;
+use captures::capture_weibos;
 
 const ROOT_URL: &str =
     "https://m.weibo.cn/api/container/getIndex?&containerid=1076037243323531&page=";
-const PAGE_LIMIT: usize = 3;
-const WAIT: u64 = 3;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -30,48 +49,30 @@ pub enum Error {
     Xlsx(#[from] xlsxwriter::XlsxError),
     #[error(transparent)]
     DatetimeParse(#[from] chrono::ParseError),
+    #[error(transparent)]
+    ParseBool(#[from] core::str::ParseBoolError),
+    #[error(transparent)]
+    DotEnv(#[from] dotenv::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 fn main() -> Result<()> {
+    dotenv::dotenv()?;
     set_dir();
-    println!("执行收集最近{}0条微博", PAGE_LIMIT);
     let mut date_map: HashMap<String, u32> = HashMap::new();
-    let options = LaunchOptionsBuilder::default()
-        .window_size(Some((1280, 800)))
-        .build()
-        .map_err(Error::Browser)?;
-    let browser = Browser::new(options).map_err(|e| Error::Browser(format!("{}", e)))?;
     let cards = get_root_info()?;
-    let vec_mb = cards.iter().map(|c| c.mblog.clone().try_into().unwrap());
     let mut pic_names = Vec::new();
-    let vec_card: Vec<RootCard> = cards
-        .iter()
-        .map(|c| c.clone().try_into().unwrap())
-        .collect();
-    for card in vec_card {
+    for card in cards.iter() {
         let month = card.mblog.created_at.month();
         let day = card.mblog.created_at.day();
         let q = date_map.entry(format!("{}-{}", month, day)).or_insert(0);
         *q += 1;
-        let tab = browser
-            .wait_for_initial_tab()
-            .map_err(|e| Error::Browser(format!("{}", e)))?;
-        println!("正在抓取微博:{}", &card.mblog.id);
-        tab.navigate_to(&card.scheme)
-            .map_err(|e| Error::Browser(format!("{}", e)))?;
-        println!("等待{}秒，让网页完全显示", WAIT);
-        std::thread::sleep(Duration::from_secs(WAIT));
-        let shot = tab
-            .capture_screenshot(ScreenshotFormat::PNG, None, true)
-            .map_err(|e| Error::Browser(format!("{}", e)))?;
-        let file_name = format!("{}-{}-{}.png", month, day, q);
-        let mut base = Path::new(OUTPUT_DIR.as_str()).to_path_buf();
-        base.push(&file_name);
-        fs::write(&base, &shot)?;
-        println!("抓取{}成功", &card.mblog.id);
         pic_names.push(format!("{}-{}-{}", month, day, q));
+    }
+    if CONFIG.captures {
+        println!("因截图功能被启用，将进行截图。请再等等...");
+        capture_weibos(&cards, CONFIG.output_dir.as_str())?;
     }
     let now = Local::now();
     let file_name = format!(
@@ -80,18 +81,19 @@ fn main() -> Result<()> {
         now.month(),
         now.day()
     );
-    let mut base = Path::new(OUTPUT_DIR.as_str()).to_path_buf();
+    let mut base = Path::new(CONFIG.output_dir.as_str()).to_path_buf();
     base.push(&file_name);
-    let input = vec_mb.zip(pic_names.into_iter()).collect();
+    let mblogs = cards.into_iter().map(|c| c.mblog);
+    let input = mblogs.zip(pic_names.into_iter()).collect();
     generate_xlsx::generate_xlsx(input, base.as_os_str().to_str().unwrap())?;
     Ok(())
 }
 
 fn set_dir() {
-    match fs::read_dir(OUTPUT_DIR.as_str()) {
+    match fs::read_dir(CONFIG.output_dir.as_str()) {
         Ok(_) => {}
         Err(_) => {
-            fs::create_dir(OUTPUT_DIR.as_str()).unwrap();
+            fs::create_dir(CONFIG.output_dir.as_str()).unwrap();
         }
     }
 }
@@ -166,13 +168,32 @@ pub struct MBlog {
     created_at: DateTime<FixedOffset>,
 }
 
-fn get_root_info() -> Result<Vec<RootCardRaw>> {
-    let mut cards: Vec<RootCardRaw> = Vec::new();
-    for page in 1..=PAGE_LIMIT {
+fn get_root_info() -> Result<Vec<RootCard>> {
+    let mut cards: Vec<RootCard> = Vec::new();
+    let recent_boundary = Local::now()
+        .with_timezone(&Shanghai)
+        .sub(chrono::Duration::days(CONFIG.recent));
+    let accent_boundary = recent_boundary.sub(chrono::Duration::days(CONFIG.accent));
+    println!(
+        "将收集{}至{}的微博,请稍等...",
+        recent_boundary, accent_boundary
+    );
+    'outer: for page in 1.. {
         let res: RootResponse = get(format!("{}{}", ROOT_URL, page).as_str())
             .call()?
             .into_json()?;
-        cards.extend(res.data.cards);
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        for card_raw in res.data.cards {
+            let card: RootCard = card_raw.try_into()?;
+            let is_boundary = card.mblog.created_at.with_timezone(&Shanghai) <= accent_boundary;
+            if card.mblog.created_at.with_timezone(&Shanghai) <= recent_boundary {
+                cards.push(card);
+            }
+            if is_boundary || cards.len() >= CONFIG.limit {
+                break 'outer;
+            }
+        }
     }
+    println!("收集了{}条微博", cards.len());
     Ok(cards)
 }
