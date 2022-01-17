@@ -1,3 +1,4 @@
 /target
 test
 *weibo
+.DS_Store
