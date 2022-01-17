@@ -2,6 +2,7 @@ use chrono::prelude::*;
 use chrono_tz::Asia::Shanghai;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
+use serde_json::Value;
 use std::{collections::HashMap, fs, ops::Sub, path::Path};
 use thiserror::Error;
 use ureq::get;
@@ -139,6 +140,7 @@ pub struct MBlogRaw {
     reprint_cmt_count: u32,
     attitudes_count: u32,
     created_at: String,
+    retweeted_status: Option<Value>,
 }
 
 impl TryFrom<MBlogRaw> for MBlog {
@@ -153,6 +155,7 @@ impl TryFrom<MBlogRaw> for MBlog {
             _reprint_cmt_count: r.reprint_cmt_count,
             attitudes_count: r.attitudes_count,
             created_at: parsed,
+            retweeted_status: r.retweeted_status,
         })
     }
 }
@@ -166,6 +169,7 @@ pub struct MBlog {
     _reprint_cmt_count: u32,
     attitudes_count: u32,
     created_at: DateTime<FixedOffset>,
+    retweeted_status: Option<Value>,
 }
 
 fn get_root_info() -> Result<Vec<RootCard>> {
@@ -186,8 +190,10 @@ fn get_root_info() -> Result<Vec<RootCard>> {
         for card_raw in res.data.cards {
             let card: RootCard = card_raw.try_into()?;
             let is_boundary = card.mblog.created_at.with_timezone(&Shanghai) <= accent_boundary;
-            if card.mblog.created_at.with_timezone(&Shanghai) <= recent_boundary {
-                cards.push(card);
+            if card.mblog.created_at.with_timezone(&Shanghai) <= recent_boundary
+                && card.mblog.retweeted_status.is_none()
+            {
+                cards.push(card)
             }
             if is_boundary || cards.len() >= CONFIG.limit {
                 break 'outer;
