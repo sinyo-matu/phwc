@@ -1,5 +1,5 @@
 [package]
-name = "collect-ph-weibo"
+name = "phwc"
 version = "0.1.0"
 edition = "2021"
 
