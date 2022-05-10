@@ -87,6 +87,7 @@ fn main() -> Result<()> {
     let mblogs = cards.into_iter().map(|c| c.mblog);
     let input = mblogs.zip(pic_names.into_iter()).collect();
     generate_xlsx::generate_xlsx(input, base.as_os_str().to_str().unwrap())?;
+    println!("微博收集结束！");
     Ok(())
 }
 
