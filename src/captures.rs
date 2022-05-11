@@ -1,5 +1,6 @@
 use chrono::prelude::*;
 use headless_chrome::{protocol::page::ScreenshotFormat, Browser, LaunchOptionsBuilder};
+use indicatif::{ProgressBar, ProgressStyle};
 use std::{collections::HashMap, fs, path::Path, time::Duration};
 
 use crate::RootCard;
@@ -13,6 +14,12 @@ pub fn capture_weibos(cards: &[RootCard], out_put_dir: &str) -> Result<()> {
         .window_size(Some((1280, 800)))
         .build()
         .map_err(Error::Browser)?;
+    let pb = ProgressBar::new(cards.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{prefix:>12.cyan.bold} [{bar:57}] {pos}/{len} ({eta}) {msg}"),
+    );
+    pb.set_prefix("收集图片中...");
     let browser = Browser::new(options).map_err(|e| Error::Browser(format!("{}", e)))?;
     for card in cards {
         let month = card.mblog.created_at.month();
@@ -22,10 +29,11 @@ pub fn capture_weibos(cards: &[RootCard], out_put_dir: &str) -> Result<()> {
         let tab = browser
             .wait_for_initial_tab()
             .map_err(|e| Error::Browser(format!("{}", e)))?;
-        println!("正在抓取微博:{}", &card.mblog.id);
+        let msg = format!("正在收集微博id:{}", &card.mblog.id);
+        pb.set_message(msg);
+        pb.inc(1);
         tab.navigate_to(&card.scheme)
             .map_err(|e| Error::Browser(format!("{}", e)))?;
-        println!("等待{}秒，让网页完全显示", WAIT);
         std::thread::sleep(Duration::from_secs(WAIT));
         let shot = tab
             .capture_screenshot(ScreenshotFormat::PNG, None, true)
@@ -34,7 +42,7 @@ pub fn capture_weibos(cards: &[RootCard], out_put_dir: &str) -> Result<()> {
         let mut base = Path::new(out_put_dir).to_path_buf();
         base.push(&file_name);
         fs::write(&base, &shot)?;
-        println!("抓取{}成功", &card.mblog.id);
     }
+    pb.finish_and_clear();
     Ok(())
 }

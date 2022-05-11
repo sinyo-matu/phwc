@@ -181,7 +181,8 @@ fn get_root_info() -> Result<Vec<RootCard>> {
     let accent_boundary = recent_boundary.sub(chrono::Duration::days(CONFIG.accent));
     println!(
         "将收集{}至{}的微博,请稍等...",
-        recent_boundary, accent_boundary
+        recent_boundary.format("%Y年%m月%d日"),
+        accent_boundary.format("%Y年%m月%d日")
     );
     'outer: for page in 1.. {
         let res: RootResponse = get(format!("{}{}", ROOT_URL, page).as_str())
