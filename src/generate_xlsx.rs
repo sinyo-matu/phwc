@@ -29,12 +29,7 @@ pub fn generate_xlsx(input: Vec<(MBlog, String)>, file_name: &str) -> Result<()>
     let mut sheet = workbook.add_worksheet(None)?;
     for (index, (header, len)) in SHEET_HEADERS.iter().enumerate() {
         let header_chars_q = header.chars().fold(0.0, |acc, _c| acc + 1.0);
-        let column_len;
-        if header_chars_q >= *len {
-            column_len = header_chars_q;
-        } else {
-            column_len = *len
-        }
+        let column_len = f64::max(header_chars_q, *len);
         sheet.set_column(
             index as u16,
             index as u16,
